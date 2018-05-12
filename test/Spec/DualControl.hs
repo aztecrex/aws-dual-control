@@ -5,7 +5,7 @@ module Spec.DualControl (tests) where
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=), Assertion)
 
-import Control.Monad.Freer (Eff, Member, send, run, reinterpret, interpret)
+import Control.Monad.Freer (Eff, Members, send, run, reinterpret, interpret)
 import Control.Monad.Freer.Writer (Writer, tell, runWriter)
 import Data.Function ((&))
 import Data.HashSet (fromList, HashSet)
@@ -21,19 +21,30 @@ infix 1 ===
 tests :: TestTree
 tests = testGroup "DualControl" [
 
-    testCase "single principal token" $ do
+    testCase "single principal token result" $ do
         let
         -- given
             principal = "Sonny"
             reason = "I say so"
-            now = UTCTime (toEnum 1903092) 12
+            now = UTCTime (toEnum 40001) 12
 
         -- when
             actual = grant' [principal] reason
 
         -- then
-        grantedTo actual (const True) === fromList [principal],
-        -- grantedUntil actual (const True) now === addUTCTime (realToFrac 3600) now,
+        grantedTo actual (const True) === fromList [principal]
+        grantedUntil actual (const True) now === addUTCTime (realToFrac (3600 :: Int)) now
+        grantedFor actual (const True) === reason,
+
+    testCase "emit attempt event" $ do
+        let
+        -- when
+            principals = ["Samantha", "Cor"]
+            reason = "because"
+            actual = grant' principals reason
+
+        -- then
+        logged [(Attempt (fromList principals) reason)] (const True) actual,
 
     testCase "grant a token to two principals" $ do
         let
@@ -120,7 +131,7 @@ tests = testGroup "DualControl" [
                 actual = grant principals reason
 
             -- then
-        logged [(Attempt (sort principals) reason)] (const True) actual,
+        logged [(Attempt (fromList principals) reason)] (const True) actual,
 
     testCase "emit attempt event when not" $ do
         let
@@ -132,7 +143,7 @@ tests = testGroup "DualControl" [
             actual = grant principals reason
 
         -- then
-        logged [(Attempt (sort principals) reason)] (const True) actual,
+        logged [(Attempt (fromList principals) reason)] (const True) actual,
 
     testCase "log principals and reason when granted" $ do
         let
@@ -187,13 +198,11 @@ tests = testGroup "DualControl" [
 
 
 data DualControlEvent where
-    Attempt :: [Text] -> Text -> DualControlEvent
+    Attempt :: HashSet Text -> Text -> DualControlEvent
     Grant :: [Text] -> Text -> DualControlEvent
     NotAuthorized :: [Text] -> [Text] -> Text -> DualControlEvent
     MissingReason :: [Text] -> DualControlEvent
     deriving (Eq, Show)
-
--- type Log = [(Text, [Text], Bool)]
 
 data DualControlEventStream a where
     Emit :: DualControlEvent -> DualControlEventStream ()
@@ -204,6 +213,9 @@ data Authorization a where
 data Crypto a where
     Salt :: Crypto Text
 
+data Clock a where
+    Now :: Clock UTCTime
+
 class DualControl r where
     grant :: [Text] -> Text -> r (Maybe Text)
     grant' :: [Text] -> Text -> r (Maybe Token)
@@ -211,13 +223,14 @@ class DualControl r where
 
 data Token = Token {
     principals :: HashSet Text,
-    reason :: Text
+    reason :: Text,
+    expiration :: UTCTime
 }
 
 
-instance (Member Crypto effects, Member DualControlEventStream effects, Member Authorization effects) => DualControl (Eff effects) where
+instance (Members '[Clock, Crypto, DualControlEventStream, Authorization] effects) => DualControl (Eff effects) where
     grant principals reason = do
-        send (Emit (Attempt (sort principals) reason))
+        send (Emit (Attempt (fromList principals) reason))
         let unique = uniq principals
         verify <- mapM (send . Verify) unique
         if length (filter id verify) >= 2
@@ -232,12 +245,19 @@ instance (Member Crypto effects, Member DualControlEventStream effects, Member A
             else do
                 send (Emit (NotAuthorized (sort principals) [] reason))
                 pure Nothing
-    grant' principals reason = pure $ Just $ Token (fromList principals) reason
+    grant' principals reason = do
+        send (Emit (Attempt (fromList principals) reason))
+        now <- send Now
+        let expiration = addUTCTime (realToFrac (3600 :: Int)) now
+        pure $ Just $ Token (fromList principals) reason expiration
 
 
-runOp :: Text -> (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] a -> (a, [DualControlEvent])
-runOp salt authz es =
-    handleCrypto salt es & handleLog & handleAuth authz & run
+epoch :: UTCTime
+epoch =(UTCTime (toEnum 0) 0)
+
+runOp :: Text -> (Text -> Bool) -> UTCTime -> Eff '[Clock, Crypto, DualControlEventStream, Authorization] a -> (a, [DualControlEvent])
+runOp salt authz now es =
+    handleClock now es & handleCrypto salt & handleLog & handleAuth authz & run
 
 handleLog :: Eff (DualControlEventStream ': effects) a -> Eff effects (a, [DualControlEvent])
 handleLog es = runWriter $ reinterpret impl es
@@ -251,26 +271,33 @@ handleAuth authz = interpret $ \(Verify prin) -> pure (authz prin)
 handleCrypto :: Text -> Eff (Crypto ': effects) a -> Eff effects a
 handleCrypto salt = interpret $ \Salt -> pure salt
 
-denied :: (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> Assertion
-denied authz es = (fst $ runOp "whatever" authz es) === Nothing
+handleClock :: UTCTime -> Eff (Clock ': effects) a -> Eff effects a
+handleClock now = interpret $ \Now -> pure now
 
-granted :: (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> Assertion
+denied :: (Text -> Bool) -> Eff '[Clock, Crypto, DualControlEventStream, Authorization] (Maybe Text) -> Assertion
+denied authz es = (fst $ runOp "whatever" authz epoch es) === Nothing
+
+granted :: (Text -> Bool) -> Eff '[Clock, Crypto, DualControlEventStream, Authorization] (Maybe Text) -> Assertion
 granted authz es =
     let salt = "salty"
-        response = fst $ runOp salt authz es
+        response = fst $ runOp salt authz epoch es
     in response === Just salt
 
 type Principal = Text
 
-grantedTo :: Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Token) -> (Principal -> Bool) -> HashSet Text
-grantedTo es authz = maybe (fromList []) principals (fst (runOp "salt" authz es))
+grantedTo :: Eff '[Clock, Crypto, DualControlEventStream, Authorization] (Maybe Token) -> (Principal -> Bool) -> HashSet Text
+grantedTo es authz = maybe (fromList []) principals (fst (runOp "salt" authz epoch es))
 
--- grantedUntil :: Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Token) -> (Principal -> Bool) -> UTCTime -> UTCTime
--- grantedUntil = error "NYI"
+grantedUntil :: Eff '[Clock, Crypto, DualControlEventStream, Authorization] (Maybe Token) -> (Principal -> Bool) -> UTCTime -> UTCTime
+grantedUntil es authz now = maybe epoch expiration (fst (runOp "salt" authz now es))
 
-logged :: [DualControlEvent] -> (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> Assertion
+grantedFor :: Eff '[Clock, Crypto, DualControlEventStream, Authorization] (Maybe Token) -> (Principal -> Bool) -> Text
+grantedFor es authz = maybe "" reason (fst (runOp "salt" authz epoch es))
+
+
+logged :: [DualControlEvent] -> (Text -> Bool) -> Eff '[Clock, Crypto, DualControlEventStream, Authorization] a -> Assertion
 logged expected authz es =
-    let events = snd $ runOp "whatever" authz es
+    let events = snd $ runOp "whatever" authz epoch es
         actual = filter (\e -> elem e expected) events
     in actual === expected
 
