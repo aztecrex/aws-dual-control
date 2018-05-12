@@ -25,7 +25,7 @@ tests = testGroup "DualControl" [
             actual = grant principals "say so"
 
         -- then
-        run token actual === Just token,
+        response token actual === Just token,
 
     testCase "grant a token to more than two principals" $ do
         let
@@ -40,7 +40,7 @@ tests = testGroup "DualControl" [
             actual = grant principals "crash"
 
         -- then
-        run token actual === Just token,
+        response token actual === Just token,
 
     testCase "do not grant a token to 1 principal" $ do
         let
@@ -53,7 +53,7 @@ tests = testGroup "DualControl" [
             actual = grant principals "overload"
 
         -- then
-        run token actual === Nothing,
+        response token actual === Nothing,
 
     testCase "grant when reason provided" $ do
         let
@@ -65,7 +65,7 @@ tests = testGroup "DualControl" [
             actual = grant ["percival", "nona"] reason
 
         -- then
-        run token actual === Just token,
+        response token actual === Just token,
 
     testCase "deny grant when reason is empty" $ do
         let
@@ -77,7 +77,7 @@ tests = testGroup "DualControl" [
             actual = grant ["sheila", "thomas"]  reason
 
         -- then
-        run token actual === Nothing,
+        response token actual === Nothing,
 
     testCase "deny if fewer than 2 unique principals" $ do
         let
@@ -90,18 +90,35 @@ tests = testGroup "DualControl" [
             actual = grant principals "crash"
 
         -- then
-        run token actual === Nothing
+        response token actual === Nothing,
+
+    testCase "log principals and reason when granted" $ do
+        let
+        -- given
+            token = "Tac"
+            principals = ["natalie", "christopher"]
+            reason = "something happened"
+
+        -- when
+            actual = grant principals reason
+
+        -- then
+        logged token actual === [(reason, sort principals, True)]
 
 
     ]
 
+type Log = [(Text, [Text], Bool)]
 
-run :: Text -> (Text -> Maybe Text) -> Maybe Text
-run = flip ($)
+response :: Text -> (Text -> (Maybe Text, Log)) -> Maybe Text
+response tok f = fst $ f tok
 
-grant :: [Text] -> Text -> Text -> Maybe Text
-grant principals reason | T.length reason > 0 && length (uniq principals) >= 2 = Just
-                        | otherwise = const Nothing
+logged :: Text -> (Text -> (Maybe Text, Log)) -> [(Text, [Text], Bool)]
+logged tok f = snd $ f tok
+
+grant :: [Text] -> Text -> Text -> (Maybe Text, Log)
+grant principals reason | T.length reason > 0 && length (uniq principals) >= 2 = \tok -> (Just tok, [(reason, sort principals, True)])
+                        | otherwise = const (Nothing, [])
 
 
 uniq :: (Ord a) => [a] -> [a]
