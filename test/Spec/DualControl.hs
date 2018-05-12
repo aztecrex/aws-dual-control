@@ -3,6 +3,7 @@ module Spec.DualControl (tests) where
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=), Assertion)
 
+import Data.List (sort, group)
 import Data.Text (Text)
 import qualified Data.Text as T (length)
 
@@ -76,7 +77,21 @@ tests = testGroup "DualControl" [
             actual = grant ["sheila", "thomas"]  reason
 
         -- then
+        run token actual === Nothing,
+
+    testCase "deny if fewer than 2 unique principals" $ do
+        let
+        -- given
+            token = "accessT"
+            principal1 = "charlie"
+            principals = [principal1, principal1, principal1]
+
+        -- when
+            actual = grant principals "crash"
+
+        -- then
         run token actual === Nothing
+
 
     ]
 
@@ -85,8 +100,10 @@ run :: Text -> (Text -> Maybe Text) -> Maybe Text
 run = flip ($)
 
 grant :: [Text] -> Text -> Text -> Maybe Text
-grant principals reason  | T.length reason > 0 && length principals >= 2 = Just
+grant principals reason | T.length reason > 0 && length (uniq principals) >= 2 = Just
                         | otherwise = const Nothing
 
 
-
+uniq :: (Ord a) => [a] -> [a]
+uniq [] = []
+uniq as = head <$> (group . sort) as
