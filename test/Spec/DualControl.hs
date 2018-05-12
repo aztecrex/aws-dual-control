@@ -103,8 +103,20 @@ tests = testGroup "DualControl" [
             actual = grant principals reason
 
         -- then
-        logged token actual === [(reason, sort principals, True)]
+        logged token actual === [(reason, sort principals, True)],
 
+    testCase "log principals and reason when denied" $ do
+        let
+        -- given
+            token = "Tac"
+            principals = ["natalie"]
+            reason = "something happened"
+
+        -- when
+            actual = grant principals reason
+
+        -- then
+        logged token actual === [(reason, sort principals, False)]
 
     ]
 
@@ -118,7 +130,7 @@ logged tok f = snd $ f tok
 
 grant :: [Text] -> Text -> Text -> (Maybe Text, Log)
 grant principals reason | T.length reason > 0 && length (uniq principals) >= 2 = \tok -> (Just tok, [(reason, sort principals, True)])
-                        | otherwise = const (Nothing, [])
+                        | otherwise = const (Nothing, [(reason, sort principals, False)])
 
 
 uniq :: (Ord a) => [a] -> [a]
