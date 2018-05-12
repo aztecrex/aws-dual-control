@@ -25,7 +25,7 @@ tests = testGroup "DualControl" [
             actual = grant principals "say so"
 
         -- then
-        response token principals actual === Just token,
+        response token (const True) actual === Just token,
 
     testCase "grant a token to more than two principals" $ do
         let
@@ -40,7 +40,7 @@ tests = testGroup "DualControl" [
             actual = grant principals "crash"
 
         -- then
-        response token principals actual === Just token,
+        response token (const True) actual === Just token,
 
     testCase "do not grant a token to 1 principal" $ do
         let
@@ -53,7 +53,7 @@ tests = testGroup "DualControl" [
             actual = grant principals "overload"
 
         -- then
-        response token principals actual === Nothing,
+        response token (const True) actual === Nothing,
 
     testCase "grant when reason provided" $ do
         let
@@ -66,7 +66,7 @@ tests = testGroup "DualControl" [
             actual = grant principals reason
 
         -- then
-        response token principals actual === Just token,
+        response token (const True) actual === Just token,
 
     testCase "deny grant when reason is empty" $ do
         let
@@ -79,7 +79,7 @@ tests = testGroup "DualControl" [
             actual = grant principals reason
 
         -- then
-        response token principals actual === Nothing,
+        response token (const True) actual === Nothing,
 
     testCase "deny if fewer than 2 unique principals" $ do
         let
@@ -92,7 +92,7 @@ tests = testGroup "DualControl" [
             actual = grant principals "crash"
 
         -- then
-        response token principals actual === Nothing,
+        response token  (const True) actual === Nothing,
 
     testCase "log principals and reason when granted" $ do
         let
@@ -105,7 +105,7 @@ tests = testGroup "DualControl" [
             actual = grant principals reason
 
         -- then
-        logged token principals actual === [(reason, sort principals, True)],
+        logged token (const True) actual === [(reason, sort principals, True)],
 
     testCase "log principals and reason when denied" $ do
         let
@@ -118,7 +118,7 @@ tests = testGroup "DualControl" [
             actual = grant principals reason
 
         -- then
-        logged token principals actual === [(reason, sort principals, False)],
+        logged token (const True) actual === [(reason, sort principals, False)],
 
     testCase "denies unauthorized principals" $ do
         let
@@ -132,25 +132,25 @@ tests = testGroup "DualControl" [
             actual = grant principals "rain"
 
         -- then
-        response token [authorized] actual === Nothing
+        response token (== authorized) actual === Nothing
 
     ]
 
 type Log = [(Text, [Text], Bool)]
 
-response :: Text -> [Text] -> ([Text] -> Text -> (Maybe Text, Log)) -> Maybe Text
+response :: Text -> (Text -> Bool) -> ((Text -> Bool) -> Text -> (Maybe Text, Log)) -> Maybe Text
 response tok authd f = fst $ f authd tok
 
-logged :: Text -> [Text] -> ([Text] -> Text -> (Maybe Text, Log)) -> [(Text, [Text], Bool)]
+logged :: Text -> (Text -> Bool) -> ((Text -> Bool) -> Text -> (Maybe Text, Log)) -> [(Text, [Text], Bool)]
 logged tok authd f = snd $ f authd tok
 
-grant :: [Text] -> Text -> [Text] -> Text -> (Maybe Text, Log)
-grant principals reason authorized | not (T.null reason) && authorize principals authorized = \tok -> (Just tok, [(reason, sort principals, True)])
+grant :: [Text] -> Text -> (Text -> Bool) -> Text -> (Maybe Text, Log)
+grant principals reason authd | not (T.null reason) && authorize principals authd = \tok -> (Just tok, [(reason, sort principals, True)])
                                    | otherwise = const (Nothing, [(reason, sort principals, False)])
 
 
-authorize :: [Text] -> [Text] -> Bool
-authorize principals authorized = length (filter (\x -> elem x authorized) (uniq principals)) >= 2
+authorize :: [Text] -> (Text -> Bool) -> Bool
+authorize principals authz = length (filter authz (uniq principals)) >= 2
 
 uniq :: (Ord a) => [a] -> [a]
 uniq [] = []
