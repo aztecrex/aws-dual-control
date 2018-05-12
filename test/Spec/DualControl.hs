@@ -99,10 +99,33 @@ tests = testGroup "DualControl" [
         -- then
         response token  (const True) actual === Nothing,
 
+    testCase "emit attempt event when granted" $ do
+        let
+            -- given
+                principals = ["natalie", "christopher"]
+                reason = "something happened"
+
+            -- when
+                actual = grant principals reason
+
+            -- then
+        logged [(Attempt (sort principals) reason)] (const True) actual,
+
+    testCase "emit attempt event when not" $ do
+        let
+        -- given
+            principals = ["json"]
+            reason = "something happened"
+
+        -- when
+            actual = grant principals reason
+
+        -- then
+        logged [(Attempt (sort principals) reason)] (const True) actual,
+
     testCase "log principals and reason when granted" $ do
         let
         -- given
-            token = "Tac"
             principals = ["natalie", "christopher"]
             reason = "something happened"
 
@@ -110,12 +133,11 @@ tests = testGroup "DualControl" [
             actual = grant principals reason
 
         -- then
-        logged token (const True) actual === [Grant (sort principals) reason],
+        logged [Grant (sort principals) reason] (const True) actual,
 
     testCase "log not-authorized authorization denied" $ do
         let
         -- given
-            token = "Tac"
             principals = ["natalie"]
             reason = "something happened"
 
@@ -123,12 +145,11 @@ tests = testGroup "DualControl" [
             actual = grant principals reason
 
         -- then
-        logged token (const True) actual === [NotAuthorized  (sort principals) [] reason],
+        logged [NotAuthorized  (sort principals) [] reason] (const True) actual,
 
     testCase "log missing-reason when missing reason" $ do
         let
         -- given
-            token = "Tac"
             principals = ["charlene", "toby", "carlton" ]
             reason = ""
 
@@ -136,7 +157,7 @@ tests = testGroup "DualControl" [
             actual = grant principals reason
 
         -- then
-        logged token (const True) actual === [MissingReason (sort principals)],
+        logged [MissingReason (sort principals)] (const True) actual,
 
     testCase "denies unauthorized principals" $ do
         let
@@ -155,16 +176,17 @@ tests = testGroup "DualControl" [
     ]
 
 
-data LogEntry where
-    Grant :: [Text] -> Text -> LogEntry
-    NotAuthorized :: [Text] -> [Text] -> Text -> LogEntry
-    MissingReason :: [Text] -> LogEntry
+data DualControlEvent where
+    Attempt :: [Text] -> Text -> DualControlEvent
+    Grant :: [Text] -> Text -> DualControlEvent
+    NotAuthorized :: [Text] -> [Text] -> Text -> DualControlEvent
+    MissingReason :: [Text] -> DualControlEvent
     deriving (Eq, Show)
 
 -- type Log = [(Text, [Text], Bool)]
 
-data AccessLog a where
-    Emit :: LogEntry -> AccessLog ()
+data DualControlEventStream a where
+    Emit :: DualControlEvent -> DualControlEventStream ()
 
 data Authorization a where
     Verify :: Text -> Authorization Bool
@@ -175,9 +197,9 @@ data Crypto a where
 class DualControl r where
     grant :: [Text] -> Text -> r (Maybe Text)
 
-instance (Member Crypto effects, Member AccessLog effects, Member Authorization effects) => DualControl (Eff effects) where
+instance (Member Crypto effects, Member DualControlEventStream effects, Member Authorization effects) => DualControl (Eff effects) where
     grant principals reason = do
-
+        send (Emit (Attempt (sort principals) reason))
         let unique = uniq principals
         verify <- mapM (send . Verify) unique
         if length (filter id verify) >= 2
@@ -194,14 +216,14 @@ instance (Member Crypto effects, Member AccessLog effects, Member Authorization 
                 pure Nothing
 
 
-runOp :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> (Maybe Text, [LogEntry])
+runOp :: Text -> (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> (Maybe Text, [DualControlEvent])
 runOp salt authz es =
     handleCrypto salt es & handleLog & handleAuth authz & run
 
-handleLog :: Eff (AccessLog ': effects) a -> Eff effects (a, [LogEntry])
+handleLog :: Eff (DualControlEventStream ': effects) a -> Eff effects (a, [DualControlEvent])
 handleLog es = runWriter $ reinterpret impl es
     where
-        impl :: AccessLog b -> Eff (Writer [LogEntry] ': effs) b
+        impl :: DualControlEventStream b -> Eff (Writer [DualControlEvent] ': effs) b
         impl (Emit l) = tell [l]
 
 handleAuth :: (Text -> Bool) -> Eff (Authorization ': effects) a -> Eff effects a
@@ -210,11 +232,14 @@ handleAuth authz = interpret $ \(Verify prin) -> pure (authz prin)
 handleCrypto :: Text -> Eff (Crypto ': effects) a -> Eff effects a
 handleCrypto salt = interpret $ \Salt -> pure salt
 
-response :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> Maybe Text
+response :: Text -> (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> Maybe Text
 response salt authz es = fst $ runOp salt authz es
 
-logged :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> [LogEntry]
-logged salt authz es = snd $ runOp salt authz es
+logged :: [DualControlEvent] -> (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> Assertion
+logged expected authz es =
+    let events = snd $ runOp "whatever" authz es
+        actual = filter (\e -> elem e expected) events
+    in actual === expected
 
 uniq :: (Ord a) => [a] -> [a]
 uniq [] = []
