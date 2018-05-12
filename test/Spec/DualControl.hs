@@ -10,6 +10,7 @@ import Control.Monad.Freer.Writer (Writer, tell, runWriter)
 import Data.Function ((&))
 import Data.List (sort, group)
 import Data.Text (Text)
+-- import Data.Time (UTCTime)
 import qualified Data.Text as T (null)
 
 (===) :: (Eq a, Show a) => a -> a -> Assertion
@@ -21,7 +22,6 @@ tests = testGroup "DualControl" [
     testCase "grant a token to two principals" $ do
         let
         -- given
-            token = "accessT"
             principal1 = "ace"
             principal2 = "tanya"
             principals = [principal1, principal2]
@@ -30,12 +30,11 @@ tests = testGroup "DualControl" [
             actual = grant principals "say so"
 
         -- then
-        response token (const True) actual === Just token,
+        granted (const True) actual,
 
     testCase "grant a token to more than two principals" $ do
         let
         -- given
-            token = "accessT"
             principal1 = "charlie"
             principal2 = "amy"
             principal3 = "mostro"
@@ -45,12 +44,11 @@ tests = testGroup "DualControl" [
             actual = grant principals "crash"
 
         -- then
-        response token (const True) actual === Just token,
+        granted (const True) actual,
 
     testCase "do not grant a token to 1 principal" $ do
         let
         -- given
-            token = "access tok"
             principal = "terry"
             principals = [principal]
 
@@ -58,12 +56,11 @@ tests = testGroup "DualControl" [
             actual = grant principals "overload"
 
         -- then
-        response token (const True) actual === Nothing,
+        denied (const True) actual,
 
     testCase "grant when reason provided" $ do
         let
         -- given
-            token = "acc"
             reason = "on fire"
             principals = ["percival", "nona"]
 
@@ -71,12 +68,11 @@ tests = testGroup "DualControl" [
             actual = grant principals reason
 
         -- then
-        response token (const True) actual === Just token,
+        granted (const True) actual,
 
     testCase "deny grant when reason is empty" $ do
         let
         -- given
-            token = "cccca"
             reason = ""
             principals = ["sheila", "thomas"]
 
@@ -84,12 +80,11 @@ tests = testGroup "DualControl" [
             actual = grant principals reason
 
         -- then
-        response token (const True) actual === Nothing,
+        denied (const True) actual,
 
     testCase "deny if fewer than 2 unique principals" $ do
         let
         -- given
-            token = "accessT"
             principal1 = "charlie"
             principals = [principal1, principal1, principal1]
 
@@ -97,7 +92,7 @@ tests = testGroup "DualControl" [
             actual = grant principals "crash"
 
         -- then
-        response token  (const True) actual === Nothing,
+        denied (const True) actual,
 
     testCase "emit attempt event when granted" $ do
         let
@@ -162,7 +157,6 @@ tests = testGroup "DualControl" [
     testCase "denies unauthorized principals" $ do
         let
         -- given
-            token = "you'll never see this"
             authorized = "josie"
             unauthorized = "tom"
             principals = [authorized, unauthorized]
@@ -171,7 +165,7 @@ tests = testGroup "DualControl" [
             actual = grant principals "rain"
 
         -- then
-        response token (== authorized) actual === Nothing
+        denied (== authorized) actual
 
     ]
 
@@ -196,6 +190,14 @@ data Crypto a where
 
 class DualControl r where
     grant :: [Text] -> Text -> r (Maybe Text)
+
+
+-- data Token = Token {
+--     principals :: [Text],
+--     reason :: Text,
+--     expiration :: UTCTime
+-- }
+
 
 instance (Member Crypto effects, Member DualControlEventStream effects, Member Authorization effects) => DualControl (Eff effects) where
     grant principals reason = do
@@ -232,8 +234,14 @@ handleAuth authz = interpret $ \(Verify prin) -> pure (authz prin)
 handleCrypto :: Text -> Eff (Crypto ': effects) a -> Eff effects a
 handleCrypto salt = interpret $ \Salt -> pure salt
 
-response :: Text -> (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> Maybe Text
-response salt authz es = fst $ runOp salt authz es
+denied :: (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> Assertion
+denied authz es = (fst $ runOp "whatever" authz es) === Nothing
+
+granted :: (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> Assertion
+granted authz es =
+    let salt = "salty"
+        response = fst $ runOp salt authz es
+    in response === Just salt
 
 logged :: [DualControlEvent] -> (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> Assertion
 logged expected authz es =

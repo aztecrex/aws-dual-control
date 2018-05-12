@@ -29,6 +29,7 @@ dependencies:
   - freer-simple
   - lens
   - text
+  - time
   - transformers
 
 library:
