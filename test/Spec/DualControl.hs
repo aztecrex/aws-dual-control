@@ -8,9 +8,10 @@ import Test.Tasty.HUnit (testCase, (@?=), Assertion)
 import Control.Monad.Freer (Eff, Member, send, run, reinterpret, interpret)
 import Control.Monad.Freer.Writer (Writer, tell, runWriter)
 import Data.Function ((&))
+import Data.HashSet (fromList, HashSet)
 import Data.List (sort, group)
 import Data.Text (Text)
--- import Data.Time (UTCTime)
+import Data.Time.Clock (UTCTime (..), addUTCTime)
 import qualified Data.Text as T (null)
 
 (===) :: (Eq a, Show a) => a -> a -> Assertion
@@ -19,6 +20,21 @@ infix 1 ===
 
 tests :: TestTree
 tests = testGroup "DualControl" [
+
+    testCase "single principal token" $ do
+        let
+        -- given
+            principal = "Sonny"
+            reason = "I say so"
+            now = UTCTime (toEnum 1903092) 12
+
+        -- when
+            actual = grant' [principal] reason
+
+        -- then
+        grantedTo actual (const True) === fromList [principal],
+        -- grantedUntil actual (const True) now === addUTCTime (realToFrac 3600) now,
+
     testCase "grant a token to two principals" $ do
         let
         -- given
@@ -190,13 +206,13 @@ data Crypto a where
 
 class DualControl r where
     grant :: [Text] -> Text -> r (Maybe Text)
+    grant' :: [Text] -> Text -> r (Maybe Token)
 
 
--- data Token = Token {
---     principals :: [Text],
---     reason :: Text,
---     expiration :: UTCTime
--- }
+data Token = Token {
+    principals :: HashSet Text,
+    reason :: Text
+}
 
 
 instance (Member Crypto effects, Member DualControlEventStream effects, Member Authorization effects) => DualControl (Eff effects) where
@@ -216,9 +232,10 @@ instance (Member Crypto effects, Member DualControlEventStream effects, Member A
             else do
                 send (Emit (NotAuthorized (sort principals) [] reason))
                 pure Nothing
+    grant' principals reason = pure $ Just $ Token (fromList principals) reason
 
 
-runOp :: Text -> (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> (Maybe Text, [DualControlEvent])
+runOp :: Text -> (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] a -> (a, [DualControlEvent])
 runOp salt authz es =
     handleCrypto salt es & handleLog & handleAuth authz & run
 
@@ -242,6 +259,14 @@ granted authz es =
     let salt = "salty"
         response = fst $ runOp salt authz es
     in response === Just salt
+
+type Principal = Text
+
+grantedTo :: Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Token) -> (Principal -> Bool) -> HashSet Text
+grantedTo es authz = maybe (fromList []) principals (fst (runOp "salt" authz es))
+
+-- grantedUntil :: Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Token) -> (Principal -> Bool) -> UTCTime -> UTCTime
+-- grantedUntil = error "NYI"
 
 logged :: [DualControlEvent] -> (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> Assertion
 logged expected authz es =
