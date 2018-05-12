@@ -110,9 +110,9 @@ tests = testGroup "DualControl" [
             actual = grant principals reason
 
         -- then
-        logged token (const True) actual === [(reason, sort principals, True)],
+        logged token (const True) actual === [Grant (sort principals) reason],
 
-    testCase "log principals and reason when denied" $ do
+    testCase "log not-authorized authorization denied" $ do
         let
         -- given
             token = "Tac"
@@ -123,7 +123,20 @@ tests = testGroup "DualControl" [
             actual = grant principals reason
 
         -- then
-        logged token (const True) actual === [(reason, sort principals, False)],
+        logged token (const True) actual === [NotAuthorized  (sort principals) [] reason],
+
+    testCase "log missing-reason when missing reason" $ do
+        let
+        -- given
+            token = "Tac"
+            principals = ["charlene", "toby", "carlton" ]
+            reason = ""
+
+        -- when
+            actual = grant principals reason
+
+        -- then
+        logged token (const True) actual === [MissingReason (sort principals)],
 
     testCase "denies unauthorized principals" $ do
         let
@@ -142,7 +155,13 @@ tests = testGroup "DualControl" [
     ]
 
 
-type Log = [(Text, [Text], Bool)]
+data Log where
+    Grant :: [Text] -> Text -> Log
+    NotAuthorized :: [Text] -> [Text] -> Text -> Log
+    MissingReason :: [Text] -> Log
+    deriving (Eq, Show)
+
+-- type Log = [(Text, [Text], Bool)]
 
 data AccessLog a where
     Emit :: Log -> AccessLog ()
@@ -158,27 +177,32 @@ class DualControl r where
 
 instance (Member Crypto effects, Member AccessLog effects, Member Authorization effects) => DualControl (Eff effects) where
     grant principals reason = do
+
         let unique = uniq principals
         verify <- mapM (send . Verify) unique
-        if length (filter id verify) >= 2 && not (T.null reason)
-            then do
-                send (Emit [(reason, sort principals, True)])
-                salt <- send Salt
-                pure (Just salt)
+        if length (filter id verify) >= 2
+            then if (T.null reason)
+                    then do
+                        send (Emit (MissingReason (sort principals)))
+                        pure Nothing
+                    else do
+                        send (Emit (Grant (sort principals) reason))
+                        salt <- send Salt
+                        pure (Just salt)
             else do
-                send (Emit [(reason, sort principals, False)])
+                send (Emit (NotAuthorized (sort principals) [] reason))
                 pure Nothing
 
 
-runOp :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> (Maybe Text, Log)
+runOp :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> (Maybe Text, [Log])
 runOp salt authz es =
     handleCrypto salt es & handleLog & handleAuth authz & run
 
-handleLog :: Eff (AccessLog ': effects) a -> Eff effects (a, Log)
+handleLog :: Eff (AccessLog ': effects) a -> Eff effects (a, [Log])
 handleLog es = runWriter $ reinterpret impl es
     where
-        impl :: AccessLog b -> Eff (Writer Log ': effs) b
-        impl (Emit l) = tell l
+        impl :: AccessLog b -> Eff (Writer [Log] ': effs) b
+        impl (Emit l) = tell [l]
 
 handleAuth :: (Text -> Bool) -> Eff (Authorization ': effects) a -> Eff effects a
 handleAuth authz = interpret $ \(Verify prin) -> pure (authz prin)
@@ -189,7 +213,7 @@ handleCrypto salt = interpret $ \Salt -> pure salt
 response :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> Maybe Text
 response salt authz es = fst $ runOp salt authz es
 
-logged :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> Log
+logged :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> [Log]
 logged salt authz es = snd $ runOp salt authz es
 
 uniq :: (Ord a) => [a] -> [a]
