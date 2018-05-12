@@ -1,8 +1,13 @@
+{-# LANGUAGE UndecidableInstances  #-}
+
 module Spec.DualControl (tests) where
 
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=), Assertion)
 
+import Control.Monad.Freer (Eff, Member, send, run, reinterpret, interpret)
+import Control.Monad.Freer.Writer (Writer, tell, runWriter)
+import Data.Function ((&))
 import Data.List (sort, group)
 import Data.Text (Text)
 import qualified Data.Text as T (null)
@@ -136,21 +141,56 @@ tests = testGroup "DualControl" [
 
     ]
 
+
 type Log = [(Text, [Text], Bool)]
 
-response :: Text -> (Text -> Bool) -> ((Text -> Bool) -> Text -> (Maybe Text, Log)) -> Maybe Text
-response tok authd f = fst $ f authd tok
+data AccessLog a where
+    Emit :: Log -> AccessLog ()
 
-logged :: Text -> (Text -> Bool) -> ((Text -> Bool) -> Text -> (Maybe Text, Log)) -> [(Text, [Text], Bool)]
-logged tok authd f = snd $ f authd tok
+data Authorization a where
+    Verify :: Text -> Authorization Bool
 
-grant :: [Text] -> Text -> (Text -> Bool) -> Text -> (Maybe Text, Log)
-grant principals reason authd | not (T.null reason) && authorize principals authd = \tok -> (Just tok, [(reason, sort principals, True)])
-                                   | otherwise = const (Nothing, [(reason, sort principals, False)])
+data Crypto a where
+    Salt :: Crypto Text
+
+class DualControl r where
+    grant :: [Text] -> Text -> r (Maybe Text)
+
+instance (Member Crypto effects, Member AccessLog effects, Member Authorization effects) => DualControl (Eff effects) where
+    grant principals reason = do
+        let unique = uniq principals
+        verify <- mapM (send . Verify) unique
+        if length (filter id verify) >= 2 && not (T.null reason)
+            then do
+                send (Emit [(reason, sort principals, True)])
+                salt <- send Salt
+                pure (Just salt)
+            else do
+                send (Emit [(reason, sort principals, False)])
+                pure Nothing
 
 
-authorize :: [Text] -> (Text -> Bool) -> Bool
-authorize principals authz = length (filter authz (uniq principals)) >= 2
+runOp :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> (Maybe Text, Log)
+runOp salt authz es =
+    handleCrypto salt es & handleLog & handleAuth authz & run
+
+handleLog :: Eff (AccessLog ': effects) a -> Eff effects (a, Log)
+handleLog es = runWriter $ reinterpret impl es
+    where
+        impl :: AccessLog b -> Eff (Writer Log ': effs) b
+        impl (Emit l) = tell l
+
+handleAuth :: (Text -> Bool) -> Eff (Authorization ': effects) a -> Eff effects a
+handleAuth authz = interpret $ \(Verify prin) -> pure (authz prin)
+
+handleCrypto :: Text -> Eff (Crypto ': effects) a -> Eff effects a
+handleCrypto salt = interpret $ \Salt -> pure salt
+
+response :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> Maybe Text
+response salt authz es = fst $ runOp salt authz es
+
+logged :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> Log
+logged salt authz es = snd $ runOp salt authz es
 
 uniq :: (Ord a) => [a] -> [a]
 uniq [] = []
