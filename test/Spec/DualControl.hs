@@ -5,7 +5,7 @@ import Test.Tasty.HUnit (testCase, (@?=), Assertion)
 
 import Data.List (sort, group)
 import Data.Text (Text)
-import qualified Data.Text as T (length)
+import qualified Data.Text as T (null)
 
 (===) :: (Eq a, Show a) => a -> a -> Assertion
 (===) = (@?=)
@@ -129,7 +129,7 @@ logged :: Text -> (Text -> (Maybe Text, Log)) -> [(Text, [Text], Bool)]
 logged tok f = snd $ f tok
 
 grant :: [Text] -> Text -> Text -> (Maybe Text, Log)
-grant principals reason | T.length reason > 0 && length (uniq principals) >= 2 = \tok -> (Just tok, [(reason, sort principals, True)])
+grant principals reason | not (T.null reason) && length (uniq principals) >= 2 = \tok -> (Just tok, [(reason, sort principals, True)])
                         | otherwise = const (Nothing, [(reason, sort principals, False)])
 
 
