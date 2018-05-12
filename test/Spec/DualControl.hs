@@ -10,6 +10,7 @@ import Control.Monad.Freer.Writer (Writer, tell, runWriter)
 import Data.Function ((&))
 import Data.HashSet (fromList, HashSet)
 import Data.List (sort, group)
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Time.Clock (UTCTime (..), addUTCTime)
 import qualified Data.Text as T (null)
@@ -29,22 +30,50 @@ tests = testGroup "DualControl" [
             now = UTCTime (toEnum 40001) 12
 
         -- when
-            actual = grant' [principal] reason
+            actual = grant' principal reason
 
         -- then
         grantedTo actual (const True) === fromList [principal]
         grantedUntil actual (const True) now === addUTCTime (realToFrac (3600 :: Int)) now
         grantedFor actual (const True) === reason,
 
-    testCase "emit attempt event" $ do
+    testCase "single principal unauthorized result" $ do
         let
+        -- given
+            principal = "Sonny"
+            reason = "I say so"
+
         -- when
-            principals = ["Samantha", "Cor"]
-            reason = "because"
-            actual = grant' principals reason
+            actual = grant' principal reason
 
         -- then
-        logged [(Attempt (fromList principals) reason)] (const True) actual,
+        notGranted actual (const False),
+
+    testCase "single principal emit attempt and success event" $ do
+        let
+        -- when
+            principal = "Cor"
+            reason = "rain"
+            actual = grant' principal reason
+
+        -- then
+        logged [
+            (Attempt (fromList [principal]) reason),
+            (Grant' (fromList [principal]) reason)
+            ] (const True) actual,
+
+    testCase "single principal unauthorized emit attempt and success event" $ do
+        let
+        -- when
+            principal = "Cor"
+            reason = "rain"
+            actual = grant' principal reason
+
+        -- then
+        logged [
+            (Attempt (fromList [principal]) reason),
+            (Unauthorized (fromList [principal]) reason)
+            ] (const False) actual,
 
     testCase "grant a token to two principals" $ do
         let
@@ -200,6 +229,8 @@ tests = testGroup "DualControl" [
 data DualControlEvent where
     Attempt :: HashSet Text -> Text -> DualControlEvent
     Grant :: [Text] -> Text -> DualControlEvent
+    Grant' :: HashSet Text -> Text -> DualControlEvent
+    Unauthorized :: HashSet Text -> Text -> DualControlEvent
     NotAuthorized :: [Text] -> [Text] -> Text -> DualControlEvent
     MissingReason :: [Text] -> DualControlEvent
     deriving (Eq, Show)
@@ -218,7 +249,7 @@ data Clock a where
 
 class DualControl r where
     grant :: [Text] -> Text -> r (Maybe Text)
-    grant' :: [Text] -> Text -> r (Maybe Token)
+    grant' :: Text -> Text -> r (Maybe Token)
 
 
 data Token = Token {
@@ -245,11 +276,18 @@ instance (Members '[Clock, Crypto, DualControlEventStream, Authorization] effect
             else do
                 send (Emit (NotAuthorized (sort principals) [] reason))
                 pure Nothing
-    grant' principals reason = do
-        send (Emit (Attempt (fromList principals) reason))
+    grant' principal reason = do
+        send (Emit (Attempt (fromList [principal]) reason))
         now <- send Now
-        let expiration = addUTCTime (realToFrac (3600 :: Int)) now
-        pure $ Just $ Token (fromList principals) reason expiration
+        authorized <- send (Verify principal)
+        if authorized
+            then do
+                let expiration = addUTCTime (realToFrac (3600 :: Int)) now
+                send (Emit (Grant' (fromList [principal]) reason) )
+                pure $ Just $ Token (fromList [principal]) reason expiration
+            else do
+                send (Emit (Unauthorized (fromList [principal]) reason ))
+                pure Nothing
 
 
 epoch :: UTCTime
@@ -293,6 +331,9 @@ grantedUntil es authz now = maybe epoch expiration (fst (runOp "salt" authz now 
 
 grantedFor :: Eff '[Clock, Crypto, DualControlEventStream, Authorization] (Maybe Token) -> (Principal -> Bool) -> Text
 grantedFor es authz = maybe "" reason (fst (runOp "salt" authz epoch es))
+
+notGranted :: Eff '[Clock, Crypto, DualControlEventStream, Authorization] (Maybe Token) -> (Principal -> Bool) -> Assertion
+notGranted es authz = ( isJust ) (fst (runOp "salt" authz epoch es)) === False
 
 
 logged :: [DualControlEvent] -> (Text -> Bool) -> Eff '[Clock, Crypto, DualControlEventStream, Authorization] a -> Assertion
