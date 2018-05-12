@@ -155,16 +155,16 @@ tests = testGroup "DualControl" [
     ]
 
 
-data Log where
-    Grant :: [Text] -> Text -> Log
-    NotAuthorized :: [Text] -> [Text] -> Text -> Log
-    MissingReason :: [Text] -> Log
+data LogEntry where
+    Grant :: [Text] -> Text -> LogEntry
+    NotAuthorized :: [Text] -> [Text] -> Text -> LogEntry
+    MissingReason :: [Text] -> LogEntry
     deriving (Eq, Show)
 
 -- type Log = [(Text, [Text], Bool)]
 
 data AccessLog a where
-    Emit :: Log -> AccessLog ()
+    Emit :: LogEntry -> AccessLog ()
 
 data Authorization a where
     Verify :: Text -> Authorization Bool
@@ -194,14 +194,14 @@ instance (Member Crypto effects, Member AccessLog effects, Member Authorization 
                 pure Nothing
 
 
-runOp :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> (Maybe Text, [Log])
+runOp :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> (Maybe Text, [LogEntry])
 runOp salt authz es =
     handleCrypto salt es & handleLog & handleAuth authz & run
 
-handleLog :: Eff (AccessLog ': effects) a -> Eff effects (a, [Log])
+handleLog :: Eff (AccessLog ': effects) a -> Eff effects (a, [LogEntry])
 handleLog es = runWriter $ reinterpret impl es
     where
-        impl :: AccessLog b -> Eff (Writer [Log] ': effs) b
+        impl :: AccessLog b -> Eff (Writer [LogEntry] ': effs) b
         impl (Emit l) = tell [l]
 
 handleAuth :: (Text -> Bool) -> Eff (Authorization ': effects) a -> Eff effects a
@@ -213,7 +213,7 @@ handleCrypto salt = interpret $ \Salt -> pure salt
 response :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> Maybe Text
 response salt authz es = fst $ runOp salt authz es
 
-logged :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> [Log]
+logged :: Text -> (Text -> Bool) -> Eff '[Crypto, AccessLog, Authorization] (Maybe Text) -> [LogEntry]
 logged salt authz es = snd $ runOp salt authz es
 
 uniq :: (Ord a) => [a] -> [a]
