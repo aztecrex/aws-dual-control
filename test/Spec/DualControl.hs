@@ -11,7 +11,7 @@ infix 1 ===
 
 tests :: TestTree
 tests = testGroup "DualControl" [
-    testCase "vends a token to two principals" $ do
+    testCase "grant a token to two principals" $ do
         let
         -- given
             token = "accessT"
@@ -25,7 +25,22 @@ tests = testGroup "DualControl" [
         -- then
         run token actual === Just token,
 
-    testCase "does not vend a token to 1 principal" $ do
+    testCase "grant a token to more than two principals" $ do
+        let
+        -- given
+            token = "accessT"
+            principal1 = "charlie"
+            principal2 = "amy"
+            principal3 = "mostro"
+            principals = [principal1, principal2, principal3]
+
+        -- when
+            actual = vend principals
+
+        -- then
+        run token actual === Just token,
+
+    testCase "do not grant a token to 1 principal" $ do
         let
         -- given
             token = "access tok"
