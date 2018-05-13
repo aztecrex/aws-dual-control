@@ -13,7 +13,7 @@ import Data.Monoid ((<>))
 import Data.Time.Clock (UTCTime (..), addUTCTime)
 
 import AccessControl (requestAccess, approveAccess)
-import AccessControl.Effect.Clock
+import AccessControl.Effect.Clock (Clock (..))
 import AccessControl.Effect.Events (Event (..), Events (..))
 import AccessControl.Types (Token (..), Reason (..), Principal (..), Access (..), Account (..), Role (..))
 
