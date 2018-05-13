@@ -11,7 +11,7 @@ import Data.Function ((&))
 import Data.Hashable (Hashable)
 import Data.HashSet (fromList, singleton, HashSet)
 import Data.List (elem)
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, isJust)
 import Data.Monoid ((<>))
 import Data.Text (Text)
 import Data.Time.Clock (UTCTime (..), addUTCTime)
@@ -23,7 +23,7 @@ infix 1 ===
 tests :: TestTree
 tests = testGroup "DualControl" [
 
-    testCase "init access" $ do
+    testCase "request token contains access" $ do
         let
         -- given
             access = AccountRole (Account "1234") (Role "giant")
@@ -35,15 +35,79 @@ tests = testGroup "DualControl" [
             actual = requestAccess access because principal
 
         -- then
-        accessOf actual === access
-        principalsOf actual === fromList [principal]
-        expirationOf actual now === addUTCTime (realToFrac (3600 :: Int)) now
-        reasonOf actual === because
-        contains (logsOf actual now) (Request access principal because)
-        contains (logsOf actual now) (Issue (tokenOf actual now))
-        ,
+        accessOf actual now === access,
 
-    testCase "approve access" $ do
+    testCase "request token contains principal" $ do
+        let
+        -- given
+            access = AccountRole (Account "1234") (Role "giant")
+            principal = Principal "Sonny"
+            because = FightFire "I say so"
+            now = UTCTime (toEnum 40001) 12
+
+        -- when
+            actual = requestAccess access because principal
+
+        -- then
+        principalsOf actual now === fromList [principal],
+
+    testCase "request token expires in 1 hour" $ do
+        let
+        -- given
+            access = AccountRole (Account "1234") (Role "giant")
+            principal = Principal "Sonny"
+            because = FightFire "I say so"
+            now = UTCTime (toEnum 40001) 12
+
+        -- when
+            actual = requestAccess access because principal
+
+        -- then
+        expirationOf actual now === addUTCTime (realToFrac (3600 :: Int)) now,
+
+    testCase "request token contains reason" $ do
+        let
+        -- given
+            access = AccountRole (Account "1234") (Role "giant")
+            principal = Principal "Sonny"
+            because = FightFire "I say so"
+            now = UTCTime (toEnum 40001) 12
+
+        -- when
+            actual = requestAccess access because principal
+
+        -- then
+        reasonOf actual now === because,
+
+    testCase "request logs attempt" $ do
+        let
+        -- given
+            access = AccountRole (Account "1234") (Role "giant")
+            principal = Principal "Sonny"
+            because = FightFire "I say so"
+            now = UTCTime (toEnum 40001) 12
+
+        -- when
+            actual = requestAccess access because principal
+
+        -- then
+        contains (logsOf actual now) (Request access principal because),
+
+    testCase "request logs issue" $ do
+        let
+        -- given
+            access = AccountRole (Account "1234") (Role "giant")
+            principal = Principal "Sonny"
+            because = FightFire "I say so"
+            now = UTCTime (toEnum 40001) 12
+
+        -- when
+            actual = requestAccess access because principal
+
+        -- then
+        contains (logsOf actual now) (Issue (tokenOf actual now)),
+
+    testCase "approve carries access" $ do
         let
         -- given
             now = UTCTime (toEnum 40401) 1213
@@ -59,12 +123,98 @@ tests = testGroup "DualControl" [
             actual = approveAccess token principal
 
         -- then
-        accessOf actual === currentAccess
-        principalsOf actual === fromList [principal] <> currentPrincipals
-        expirationOf actual now === addUTCTime (realToFrac (3600 :: Int)) now -- an hour from now, irrespective of current
-        reasonOf actual === currentReason
-        contains (logsOf actual now) (Approve token principal)
+        accessOf actual now === currentAccess,
+
+    testCase "approve adds principal" $ do
+        let
+        -- given
+            now = UTCTime (toEnum 40401) 1213
+            currentAccess = AccountRole (Account "12") (Role "king")
+            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
+            currentExpiration = addUTCTime (realToFrac (-1000 :: Int)) now
+            currentReason = Develop
+
+            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            principal = Principal "Cher"
+
+        -- when
+            actual = approveAccess token principal
+
+        -- then
+        principalsOf actual now === fromList [principal] <> currentPrincipals,
+
+    testCase "approve resets expiration to one hour from now" $ do
+        let
+        -- given
+            now = UTCTime (toEnum 40401) 1213
+            currentAccess = AccountRole (Account "12") (Role "king")
+            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
+            currentExpiration = addUTCTime (realToFrac (-1000 :: Int)) now
+            currentReason = Develop
+
+            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            principal = Principal "Cher"
+
+        -- when
+            actual = approveAccess token principal
+
+        -- then
+        expirationOf actual now === addUTCTime (realToFrac (3600 :: Int)) now, -- an hour from now, irrespective of current
+
+    testCase "approve carries reason" $ do
+        let
+        -- given
+            now = UTCTime (toEnum 40401) 1213
+            currentAccess = AccountRole (Account "12") (Role "king")
+            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
+            currentExpiration = addUTCTime (realToFrac (-1000 :: Int)) now
+            currentReason = Develop
+
+            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            principal = Principal "Cher"
+
+        -- when
+            actual = approveAccess token principal
+
+        -- then
+        reasonOf actual now === currentReason,
+
+    testCase "approve emits attempt" $ do
+        let
+        -- given
+            now = UTCTime (toEnum 40401) 1213
+            currentAccess = AccountRole (Account "12") (Role "king")
+            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
+            currentExpiration = addUTCTime (realToFrac (-1000 :: Int)) now
+            currentReason = Develop
+
+            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            principal = Principal "Cher"
+
+        -- when
+            actual = approveAccess token principal
+
+        -- then
+        contains (logsOf actual now) (Approve token principal),
+
+    testCase "approve emits issue" $ do
+        let
+        -- given
+            now = UTCTime (toEnum 40401) 1213
+            currentAccess = AccountRole (Account "12") (Role "king")
+            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
+            currentExpiration = addUTCTime (realToFrac (-1000 :: Int)) now
+            currentReason = Develop
+
+            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            principal = Principal "Cher"
+
+        -- when
+            actual = approveAccess token principal
+
+        -- then
         contains (logsOf actual now) (Issue (tokenOf actual now))
+
 
     --     ,
 
@@ -383,17 +533,20 @@ handleClock now = interpret $ \Now -> pure now
 tokenOf :: Eff '[Clock, Events] (Maybe Token) -> UTCTime -> Token
 tokenOf es now = fromJust . fst $ runOp now es
 
-accessOf :: Eff '[Clock, Events] (Maybe Token) -> Access
-accessOf es = access . fromJust . fst $ runOp epoch es
+accessOf :: Eff '[Clock, Events] (Maybe Token) -> UTCTime -> Access
+accessOf es now = access . fromJust . fst $ runOp now es
 
 expirationOf :: Eff '[Clock, Events] (Maybe Token) -> UTCTime -> UTCTime
 expirationOf es now = expiration . fromJust . fst $ runOp now es
 
-reasonOf :: Eff '[Clock, Events] (Maybe Token) -> Reason
-reasonOf es =  reason . fromJust . fst $ runOp epoch es
+reasonOf :: Eff '[Clock, Events] (Maybe Token) -> UTCTime -> Reason
+reasonOf es now =  reason . fromJust . fst $ runOp now es
 
-principalsOf :: Eff '[Clock, Events] (Maybe Token) -> HashSet Principal
-principalsOf es = principals . fromJust . fst $ runOp epoch es
+principalsOf :: Eff '[Clock, Events] (Maybe Token) -> UTCTime -> HashSet Principal
+principalsOf es now = principals . fromJust . fst $ runOp now es
 
 logsOf :: Eff '[Clock, Events] (Maybe Token) -> UTCTime -> [Event]
 logsOf es now = snd $ runOp now es
+
+succeeded :: Eff '[Clock, Events] (Maybe Token) -> UTCTime -> Bool
+succeeded es now = isJust . fst $ runOp now es
