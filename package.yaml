@@ -27,6 +27,7 @@ dependencies:
   - bytestring
   - data-default
   - freer-simple
+  - hashable
   - lens
   - text
   - time
