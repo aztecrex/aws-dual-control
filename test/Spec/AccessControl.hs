@@ -12,10 +12,10 @@ import Data.Maybe (fromJust, isJust)
 import Data.Monoid ((<>))
 import Data.Time.Clock (UTCTime (..), addUTCTime)
 
-import AccessControl (requestAccess, approveAccess)
-import AccessControl.Effect.Clock
+import AccessControl (requestAccess, approveAccess, tokenDurationSeconds)
+import AccessControl.Effect.Clock (Clock (..))
 import AccessControl.Effect.Events (Event (..), Events (..))
-import AccessControl.Types
+import AccessControl.Types (Token (..), Reason (..), Principal (..), Access (..), Account (..), Role (..))
 
 (===) :: (Eq a, Show a) => a -> a -> Assertion
 (===) = (@?=)
@@ -64,7 +64,7 @@ tests = testGroup "DualControl" [
             actual = requestAccess access because principal
 
         -- then
-        expirationOf actual curTime === addUTCTime (realToFrac (3600 :: Int)) curTime,
+        expirationOf actual curTime === addUTCTime (realToFrac tokenDurationSeconds) curTime,
 
     testCase "request token contains reason" $ do
         let
@@ -113,11 +113,8 @@ tests = testGroup "DualControl" [
         -- given
             curTime = UTCTime (toEnum 40401) 1213
             currentAccess = AccountRole (Account "12") (Role "king")
-            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
-            currentExpiration = addUTCTime (realToFrac (1000 :: Int)) curTime
-            currentReason = Develop
 
-            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            token = (validToken curTime) { access = currentAccess }
             principal = Principal "Cher"
 
         -- when
@@ -130,12 +127,9 @@ tests = testGroup "DualControl" [
         let
         -- given
             curTime = UTCTime (toEnum 40401) 1213
-            currentAccess = AccountRole (Account "12") (Role "king")
             currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
-            currentExpiration = addUTCTime (realToFrac (1100 :: Int)) curTime
-            currentReason = Develop
 
-            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            token = (validToken curTime) { principals = currentPrincipals }
             principal = Principal "Cher"
 
         -- when
@@ -148,30 +142,23 @@ tests = testGroup "DualControl" [
         let
         -- given
             curTime = UTCTime (toEnum 40401) 1213
-            currentAccess = AccountRole (Account "12") (Role "king")
-            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
-            currentExpiration = addUTCTime (realToFrac (1201 :: Int)) curTime
-            currentReason = Develop
 
-            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            token = validToken curTime
             principal = Principal "Cher"
 
         -- when
             actual = approveAccess token principal
 
         -- then
-        expirationOf actual curTime === addUTCTime (realToFrac (3600 :: Int)) curTime, -- an hour from curTime, irrespective of current
+        expirationOf actual curTime === addUTCTime (realToFrac tokenDurationSeconds) curTime, -- an hour from curTime, irrespective of current
 
     testCase "approve carries reason" $ do
         let
         -- given
-            curTime = UTCTime (toEnum 40401) 1213
-            currentAccess = AccountRole (Account "12") (Role "king")
-            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
-            currentExpiration = addUTCTime (realToFrac (1000 :: Int)) curTime
+            curTime = UTCTime (toEnum 41401) 121
             currentReason = Develop
 
-            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            token = (validToken curTime) { reason = currentReason }
             principal = Principal "Cher"
 
         -- when
@@ -184,12 +171,8 @@ tests = testGroup "DualControl" [
         let
         -- given
             curTime = UTCTime (toEnum 40401) 1213
-            currentAccess = AccountRole (Account "12") (Role "king")
-            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
-            currentExpiration = addUTCTime (realToFrac (1001 :: Int)) curTime
-            currentReason = Develop
 
-            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            token = validToken curTime
             principal = Principal "Cher"
 
         -- when
@@ -202,12 +185,8 @@ tests = testGroup "DualControl" [
         let
         -- given
             curTime = UTCTime (toEnum 40401) 1213
-            currentAccess = AccountRole (Account "12") (Role "king")
-            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
-            currentExpiration = addUTCTime (realToFrac (1002 :: Int)) curTime
-            currentReason = Develop
 
-            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            token = validToken curTime
             principal = Principal "Cher"
 
         -- when
@@ -220,8 +199,7 @@ tests = testGroup "DualControl" [
         let
         -- given
             curTime = UTCTime (toEnum 42123) 1703
-            currentExpiration = addUTCTime (realToFrac (-3601 :: Int)) curTime
-            token = Token  (AccountRole (Account "13") (Role "duke")) (fromList [Principal "Ace"]) Deploy currentExpiration
+            token = expiredToken curTime
 
         -- when
             actual = approveAccess token (Principal "Jones")
@@ -234,8 +212,7 @@ tests = testGroup "DualControl" [
         -- given
             curTime = UTCTime (toEnum 42123) 1703
             principal = Principal "Penelope"
-            currentExpiration = addUTCTime (realToFrac (-3601 :: Int)) curTime
-            token = Token  (AccountRole (Account "13") (Role "duke")) (fromList [Principal "Ace"]) Deploy currentExpiration
+            token = expiredToken curTime
 
         -- when
             actual = approveAccess token principal
@@ -246,9 +223,8 @@ tests = testGroup "DualControl" [
     testCase "expired approval emits expired" $ do
         let
         -- given
-            curTime = UTCTime (toEnum 42123) 1703
-            currentExpiration = addUTCTime (realToFrac (-3601 :: Int)) curTime
-            token = Token  (AccountRole (Account "13") (Role "duke")) (fromList [Principal "Ace"]) Deploy currentExpiration
+            curTime = UTCTime (toEnum 42333) 1703
+            token = expiredToken curTime
 
         -- when
             actual = approveAccess token (Principal "Jones")
@@ -259,6 +235,34 @@ tests = testGroup "DualControl" [
 
     ]
 
+epoch :: UTCTime
+epoch = UTCTime (toEnum 0) 0
+
+defaultAccess :: Access
+defaultAccess = AccountRole (Account "x") (Role "peon")
+
+defaultPrincipals :: HashSet Principal
+defaultPrincipals = fromList []
+
+defaultReason :: Reason
+defaultReason = Provision
+
+defaultExpiration :: UTCTime
+defaultExpiration = epoch
+
+defaultToken :: Token
+defaultToken = Token {
+    access = defaultAccess,
+    principals = defaultPrincipals,
+    reason = defaultReason,
+    expiration = defaultExpiration
+}
+
+validToken :: UTCTime -> Token
+validToken curTime = defaultToken {expiration = curTime}
+
+expiredToken :: UTCTime -> Token
+expiredToken curTime = defaultToken {expiration = addUTCTime (realToFrac (-1 :: Int)) curTime}
 
 contains :: (Eq a) => [a] -> a ->  Assertion
 contains as a = elem a as === True

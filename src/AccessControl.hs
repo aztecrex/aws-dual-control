@@ -1,7 +1,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 module AccessControl (
     requestAccess,
-    approveAccess
+    approveAccess,
+    tokenDurationSeconds,
 ) where
 
 import AccessControl.Effect.Clock (Clock, now)
@@ -12,7 +13,8 @@ import Data.HashSet (singleton)
 import Data.Monoid ((<>))
 import Data.Time.Clock (addUTCTime)
 
-
+tokenDurationSeconds :: Integer
+tokenDurationSeconds = 3600
 
 -- | Make an initial access request. Depending on the resource and reason, this may be enough
 --   to grant access.
@@ -28,7 +30,7 @@ requestAccess :: (Members '[Clock, Events] effects) =>
 requestAccess access reason requestor = do
         emitRequest access requestor reason
         curTime <- now
-        let token = Token access (singleton requestor) reason (addUTCTime (realToFrac (3600 :: Int)) curTime)
+        let token = Token access (singleton requestor) reason (addUTCTime (realToFrac tokenDurationSeconds) curTime)
         emitIssue token
         pure . Just $ token
 
@@ -46,7 +48,7 @@ approveAccess request approver = do
     curTime <- now
     if (expiration request) >= curTime
         then do
-            let token = Token (access request) (singleton approver <> principals request) (reason request) (addUTCTime (realToFrac (3600 :: Int)) curTime)
+            let token = Token (access request) (singleton approver <> principals request) (reason request) (addUTCTime (realToFrac tokenDurationSeconds) curTime)
             emitIssue token
             pure . Just $ token
         else do
