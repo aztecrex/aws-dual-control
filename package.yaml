@@ -37,17 +37,6 @@ dependencies:
 library:
   source-dirs: src
 
-executables:
-  aws-dual-control-exe:
-    main:                Main.hs
-    source-dirs:         app
-    ghc-options:
-    - -threaded
-    - -rtsopts
-    - -with-rtsopts=-N
-    dependencies:
-    - aws-dual-control
-
 tests:
   aws-dual-control-test:
     main:                Spec.hs
