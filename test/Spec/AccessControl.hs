@@ -1,6 +1,4 @@
-{-# LANGUAGE UndecidableInstances  #-}
-
-module Spec.DualControl (tests) where
+module Spec.AccessControl (tests) where
 
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=), Assertion)
