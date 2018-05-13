@@ -226,7 +226,34 @@ tests = testGroup "DualControl" [
             actual = approveAccess token (Principal "Jones")
 
         -- then
-        succeeded actual now === False
+        succeeded actual now === False,
+
+    testCase "expired approve emits attempt" $ do
+        let
+        -- given
+            now = UTCTime (toEnum 42123) 1703
+            principal = Principal "Penelope"
+            currentExpiration = addUTCTime (realToFrac (-3601 :: Int)) now
+            token = Token  (AccountRole (Account "13") (Role "duke")) (fromList [Principal "Ace"]) Deploy currentExpiration
+
+        -- when
+            actual = approveAccess token principal
+
+        -- then
+        contains (logsOf actual now) (Approve token principal),
+
+    testCase "expired approval emits expired" $ do
+        let
+        -- given
+            now = UTCTime (toEnum 42123) 1703
+            currentExpiration = addUTCTime (realToFrac (-3601 :: Int)) now
+            token = Token  (AccountRole (Account "13") (Role "duke")) (fromList [Principal "Ace"]) Deploy currentExpiration
+
+        -- when
+            actual = approveAccess token (Principal "Jones")
+
+        -- then
+        contains (logsOf actual now) (Expired token)
 
 
     --     ,
@@ -426,6 +453,7 @@ data Event where
     Request :: Access -> Principal -> Reason -> Event
     Approve :: Token -> Principal -> Event
     Issue :: Token -> Event
+    Expired :: Token -> Event
     deriving (Eq, Show)
 
 data Events a where
@@ -524,7 +552,8 @@ instance (Members '[Clock, Events] effects) => AccessControl (Eff effects) where
                 let token = Token (access request) (singleton approver <> principals request) (reason request) (addUTCTime (realToFrac (3600 :: Int)) now)
                 send (Emit (Issue token))
                 pure . Just $ token
-            else
+            else do
+                send (Emit (Expired request))
                 pure Nothing
 
 
