@@ -15,7 +15,7 @@ import Data.Time.Clock (UTCTime (..), addUTCTime)
 import AccessControl (requestAccess, approveAccess)
 import AccessControl.Effect.Clock
 import AccessControl.Effect.Events (Event (..), Events (..))
-import AccessControl.Types
+import AccessControl.Types (Token (..), Reason (..), Principal (..), Access (..), Account (..), Role (..))
 
 (===) :: (Eq a, Show a) => a -> a -> Assertion
 (===) = (@?=)
