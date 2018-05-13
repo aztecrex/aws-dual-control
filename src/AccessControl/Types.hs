@@ -1,4 +1,4 @@
-module Types (
+module AccessControl.Types (
     Principal (..),
     Reason (..),
     Account (..),

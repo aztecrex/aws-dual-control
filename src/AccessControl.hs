@@ -3,13 +3,13 @@ module AccessControl (
     AccessControl (..)
 ) where
 
+import AccessControl.Effect.Clock (Clock, now)
+import AccessControl.Effect.Events (Events, emitRequest, emitApprove, emitIssue, emitExpired)
+import AccessControl.Types (Access, Reason, Principal, Token (..))
 import Control.Monad.Freer (Eff, Members)
 import Data.HashSet (singleton)
 import Data.Monoid ((<>))
 import Data.Time.Clock (addUTCTime)
-import Effect.Clock (Clock, now)
-import Effect.Events (Events, emitRequest, emitApprove, emitIssue, emitExpired)
-import Types (Access, Reason, Principal, Token (..))
 
 
 class AccessControl r where
