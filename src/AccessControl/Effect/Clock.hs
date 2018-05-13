@@ -1,4 +1,4 @@
-module Effect.Clock (
+module AccessControl.Effect.Clock (
     Clock (..),
     now
 ) where

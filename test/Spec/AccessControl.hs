@@ -1,6 +1,4 @@
-{-# LANGUAGE UndecidableInstances  #-}
-
-module Spec.DualControl (tests) where
+module Spec.AccessControl (tests) where
 
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=), Assertion)
@@ -14,10 +12,10 @@ import Data.Maybe (fromJust, isJust)
 import Data.Monoid ((<>))
 import Data.Time.Clock (UTCTime (..), addUTCTime)
 
-import AccessControl (AccessControl (..))
-import Effect.Clock
-import Effect.Events (Event (..), Events (..))
-import Types
+import AccessControl (requestAccess, approveAccess)
+import AccessControl.Effect.Clock
+import AccessControl.Effect.Events (Event (..), Events (..))
+import AccessControl.Types
 
 (===) :: (Eq a, Show a) => a -> a -> Assertion
 (===) = (@?=)

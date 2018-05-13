@@ -1,4 +1,4 @@
-module Effect.Events (
+module AccessControl.Effect.Events (
     Event (..),
     Events (..),
     emitRequest,
@@ -8,7 +8,7 @@ module Effect.Events (
 ) where
 
 import Control.Monad.Freer (Eff, Member, send)
-import Types (Access, Principal, Reason, Event (..), Token)
+import AccessControl.Types (Access, Principal, Reason, Event (..), Token)
 
 data Events a where
     Emit :: Event -> Events ()
