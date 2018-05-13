@@ -32,6 +32,7 @@ newtype Role = Role Text deriving (Eq, Show, Hashable)
 data Access where
     AccountRole :: Account -> Role -> Access
     AccountRoot :: Account -> Access
+    AccountHost :: Account -> Access
     deriving (Eq, Show)
 
 data Token = Token {
