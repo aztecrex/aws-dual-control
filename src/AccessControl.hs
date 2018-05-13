@@ -14,7 +14,7 @@ import Data.Monoid ((<>))
 import Data.Time.Clock (addUTCTime)
 
 tokenDurationSeconds :: Integer
-tokenDurationSeconds = 3600
+tokenDurationSeconds = 5400
 
 -- | Make an initial access request. Depending on the resource and reason, this may be enough
 --   to grant access.
