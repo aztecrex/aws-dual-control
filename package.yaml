@@ -27,10 +27,12 @@ dependencies:
   - bytestring
   - data-default
   - freer-simple
+  - hashable
   - lens
   - text
   - time
   - transformers
+  - unordered-containers
 
 library:
   source-dirs: src

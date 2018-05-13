@@ -5,13 +5,16 @@ module Spec.DualControl (tests) where
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=), Assertion)
 
-import Control.Monad.Freer (Eff, Member, send, run, reinterpret, interpret)
+import Control.Monad.Freer (Eff, Members, send, run, reinterpret, interpret)
 import Control.Monad.Freer.Writer (Writer, tell, runWriter)
 import Data.Function ((&))
-import Data.List (sort, group)
+import Data.Hashable (Hashable)
+import Data.HashSet (fromList, singleton, HashSet)
+import Data.List (elem)
+import Data.Maybe (fromJust, isJust)
+import Data.Monoid ((<>))
 import Data.Text (Text)
--- import Data.Time (UTCTime)
-import qualified Data.Text as T (null)
+import Data.Time.Clock (UTCTime (..), addUTCTime)
 
 (===) :: (Eq a, Show a) => a -> a -> Assertion
 (===) = (@?=)
@@ -19,236 +22,574 @@ infix 1 ===
 
 tests :: TestTree
 tests = testGroup "DualControl" [
-    testCase "grant a token to two principals" $ do
+
+    testCase "request token contains access" $ do
         let
         -- given
-            principal1 = "ace"
-            principal2 = "tanya"
-            principals = [principal1, principal2]
+            access = AccountRole (Account "1234") (Role "giant")
+            principal = Principal "Sonny"
+            because = FightFire "I say so"
+            now = UTCTime (toEnum 40001) 12
 
         -- when
-            actual = grant principals "say so"
+            actual = requestAccess access because principal
 
         -- then
-        granted (const True) actual,
+        accessOf actual now === access,
 
-    testCase "grant a token to more than two principals" $ do
+    testCase "request token contains principal" $ do
         let
         -- given
-            principal1 = "charlie"
-            principal2 = "amy"
-            principal3 = "mostro"
-            principals = [principal1, principal2, principal3]
+            access = AccountRole (Account "1234") (Role "giant")
+            principal = Principal "Sonny"
+            because = FightFire "I say so"
+            now = UTCTime (toEnum 40001) 12
 
         -- when
-            actual = grant principals "crash"
+            actual = requestAccess access because principal
 
         -- then
-        granted (const True) actual,
+        principalsOf actual now === fromList [principal],
 
-    testCase "do not grant a token to 1 principal" $ do
+    testCase "request token expires in 1 hour" $ do
         let
         -- given
-            principal = "terry"
-            principals = [principal]
+            access = AccountRole (Account "1234") (Role "giant")
+            principal = Principal "Sonny"
+            because = FightFire "I say so"
+            now = UTCTime (toEnum 40001) 12
 
         -- when
-            actual = grant principals "overload"
+            actual = requestAccess access because principal
 
         -- then
-        denied (const True) actual,
+        expirationOf actual now === addUTCTime (realToFrac (3600 :: Int)) now,
 
-    testCase "grant when reason provided" $ do
+    testCase "request token contains reason" $ do
         let
         -- given
-            reason = "on fire"
-            principals = ["percival", "nona"]
+            access = AccountRole (Account "1234") (Role "giant")
+            principal = Principal "Sonny"
+            because = FightFire "I say so"
+            now = UTCTime (toEnum 40001) 12
 
         -- when
-            actual = grant principals reason
+            actual = requestAccess access because principal
 
         -- then
-        granted (const True) actual,
+        reasonOf actual now === because,
 
-    testCase "deny grant when reason is empty" $ do
+    testCase "request logs attempt" $ do
         let
         -- given
-            reason = ""
-            principals = ["sheila", "thomas"]
+            access = AccountRole (Account "1234") (Role "giant")
+            principal = Principal "Sonny"
+            because = FightFire "I say so"
+            now = UTCTime (toEnum 40001) 12
 
         -- when
-            actual = grant principals reason
+            actual = requestAccess access because principal
 
         -- then
-        denied (const True) actual,
+        contains (logsOf actual now) (Request access principal because),
 
-    testCase "deny if fewer than 2 unique principals" $ do
+    testCase "request logs issue" $ do
         let
         -- given
-            principal1 = "charlie"
-            principals = [principal1, principal1, principal1]
+            access = AccountRole (Account "1234") (Role "giant")
+            principal = Principal "Sonny"
+            because = FightFire "I say so"
+            now = UTCTime (toEnum 40001) 12
 
         -- when
-            actual = grant principals "crash"
+            actual = requestAccess access because principal
 
         -- then
-        denied (const True) actual,
+        contains (logsOf actual now) (Issue (tokenOf actual now)),
 
-    testCase "emit attempt event when granted" $ do
-        let
-            -- given
-                principals = ["natalie", "christopher"]
-                reason = "something happened"
-
-            -- when
-                actual = grant principals reason
-
-            -- then
-        logged [(Attempt (sort principals) reason)] (const True) actual,
-
-    testCase "emit attempt event when not" $ do
+    testCase "approve carries access" $ do
         let
         -- given
-            principals = ["json"]
-            reason = "something happened"
+            now = UTCTime (toEnum 40401) 1213
+            currentAccess = AccountRole (Account "12") (Role "king")
+            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
+            currentExpiration = addUTCTime (realToFrac (1000 :: Int)) now
+            currentReason = Develop
+
+            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            principal = Principal "Cher"
 
         -- when
-            actual = grant principals reason
+            actual = approveAccess token principal
 
         -- then
-        logged [(Attempt (sort principals) reason)] (const True) actual,
+        accessOf actual now === currentAccess,
 
-    testCase "log principals and reason when granted" $ do
+    testCase "approve adds principal" $ do
         let
         -- given
-            principals = ["natalie", "christopher"]
-            reason = "something happened"
+            now = UTCTime (toEnum 40401) 1213
+            currentAccess = AccountRole (Account "12") (Role "king")
+            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
+            currentExpiration = addUTCTime (realToFrac (1100 :: Int)) now
+            currentReason = Develop
+
+            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            principal = Principal "Cher"
 
         -- when
-            actual = grant principals reason
+            actual = approveAccess token principal
 
         -- then
-        logged [Grant (sort principals) reason] (const True) actual,
+        principalsOf actual now === fromList [principal] <> currentPrincipals,
 
-    testCase "log not-authorized authorization denied" $ do
+    testCase "approve resets expiration to one hour from now" $ do
         let
         -- given
-            principals = ["natalie"]
-            reason = "something happened"
+            now = UTCTime (toEnum 40401) 1213
+            currentAccess = AccountRole (Account "12") (Role "king")
+            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
+            currentExpiration = addUTCTime (realToFrac (1201 :: Int)) now
+            currentReason = Develop
+
+            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            principal = Principal "Cher"
 
         -- when
-            actual = grant principals reason
+            actual = approveAccess token principal
 
         -- then
-        logged [NotAuthorized  (sort principals) [] reason] (const True) actual,
+        expirationOf actual now === addUTCTime (realToFrac (3600 :: Int)) now, -- an hour from now, irrespective of current
 
-    testCase "log missing-reason when missing reason" $ do
+    testCase "approve carries reason" $ do
         let
         -- given
-            principals = ["charlene", "toby", "carlton" ]
-            reason = ""
+            now = UTCTime (toEnum 40401) 1213
+            currentAccess = AccountRole (Account "12") (Role "king")
+            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
+            currentExpiration = addUTCTime (realToFrac (1000 :: Int)) now
+            currentReason = Develop
+
+            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            principal = Principal "Cher"
 
         -- when
-            actual = grant principals reason
+            actual = approveAccess token principal
 
         -- then
-        logged [MissingReason (sort principals)] (const True) actual,
+        reasonOf actual now === currentReason,
 
-    testCase "denies unauthorized principals" $ do
+    testCase "approve emits attempt" $ do
         let
         -- given
-            authorized = "josie"
-            unauthorized = "tom"
-            principals = [authorized, unauthorized]
+            now = UTCTime (toEnum 40401) 1213
+            currentAccess = AccountRole (Account "12") (Role "king")
+            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
+            currentExpiration = addUTCTime (realToFrac (1001 :: Int)) now
+            currentReason = Develop
+
+            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            principal = Principal "Cher"
 
         -- when
-            actual = grant principals "rain"
+            actual = approveAccess token principal
 
         -- then
-        denied (== authorized) actual
+        contains (logsOf actual now) (Approve token principal),
+
+    testCase "approve emits issue" $ do
+        let
+        -- given
+            now = UTCTime (toEnum 40401) 1213
+            currentAccess = AccountRole (Account "12") (Role "king")
+            currentPrincipals = fromList [Principal "Sonny", Principal "Hope"]
+            currentExpiration = addUTCTime (realToFrac (1002 :: Int)) now
+            currentReason = Develop
+
+            token = Token currentAccess currentPrincipals currentReason currentExpiration
+            principal = Principal "Cher"
+
+        -- when
+            actual = approveAccess token principal
+
+        -- then
+        contains (logsOf actual now) (Issue (tokenOf actual now)),
+
+    testCase "approve fails when expired" $ do
+        let
+        -- given
+            now = UTCTime (toEnum 42123) 1703
+            currentExpiration = addUTCTime (realToFrac (-3601 :: Int)) now
+            token = Token  (AccountRole (Account "13") (Role "duke")) (fromList [Principal "Ace"]) Deploy currentExpiration
+
+        -- when
+            actual = approveAccess token (Principal "Jones")
+
+        -- then
+        succeeded actual now === False,
+
+    testCase "expired approve emits attempt" $ do
+        let
+        -- given
+            now = UTCTime (toEnum 42123) 1703
+            principal = Principal "Penelope"
+            currentExpiration = addUTCTime (realToFrac (-3601 :: Int)) now
+            token = Token  (AccountRole (Account "13") (Role "duke")) (fromList [Principal "Ace"]) Deploy currentExpiration
+
+        -- when
+            actual = approveAccess token principal
+
+        -- then
+        contains (logsOf actual now) (Approve token principal),
+
+    testCase "expired approval emits expired" $ do
+        let
+        -- given
+            now = UTCTime (toEnum 42123) 1703
+            currentExpiration = addUTCTime (realToFrac (-3601 :: Int)) now
+            token = Token  (AccountRole (Account "13") (Role "duke")) (fromList [Principal "Ace"]) Deploy currentExpiration
+
+        -- when
+            actual = approveAccess token (Principal "Jones")
+
+        -- then
+        contains (logsOf actual now) (Expired token)
+
+
+    --     ,
+
+
+
+    -- testCase "single principal unauthorized result" $ do
+    --     let
+    --     -- given
+    --         principal = "Sonny"
+    --         reason = "I say so"
+
+    --     -- when
+    --         actual = grant' principal reason
+
+    --     -- then
+    --     notGranted actual (const False),
+
+    -- testCase "single principal emit attempt and success event" $ do
+    --     let
+    --     -- when
+    --         principal = "Cor"
+    --         reason = "rain"
+    --         actual = grant' principal reason
+
+    --     -- then
+    --     logged [
+    --         (Attempt (fromList [principal]) reason),
+    --         (Grant' (fromList [principal]) reason)
+    --         ] (const True) actual,
+
+    -- testCase "single principal unauthorized emit attempt and success event" $ do
+    --     let
+    --     -- when
+    --         principal = "Cor"
+    --         reason = "rain"
+    --         actual = grant' principal reason
+
+    --     -- then
+    --     logged [
+    --         (Attempt (fromList [principal]) reason),
+    --         (Unauthorized (fromList [principal]) reason)
+    --         ] (const False) actual,
+
+    -- testCase "grant a token to two principals" $ do
+    --     let
+    --     -- given
+    --         principal1 = "ace"
+    --         principal2 = "tanya"
+    --         principals = [principal1, principal2]
+
+    --     -- when
+    --         actual = grant principals "say so"
+
+    --     -- then
+    --     granted (const True) actual,
+
+    -- testCase "grant a token to more than two principals" $ do
+    --     let
+    --     -- given
+    --         principal1 = "charlie"
+    --         principal2 = "amy"
+    --         principal3 = "mostro"
+    --         principals = [principal1, principal2, principal3]
+
+    --     -- when
+    --         actual = grant principals "crash"
+
+    --     -- then
+    --     granted (const True) actual,
+
+    -- testCase "do not grant a token to 1 principal" $ do
+    --     let
+    --     -- given
+    --         principal = "terry"
+    --         principals = [principal]
+
+    --     -- when
+    --         actual = grant principals "overload"
+
+    --     -- then
+    --     denied (const True) actual,
+
+    -- testCase "grant when reason provided" $ do
+    --     let
+    --     -- given
+    --         reason = "on fire"
+    --         principals = ["percival", "nona"]
+
+    --     -- when
+    --         actual = grant principals reason
+
+    --     -- then
+    --     granted (const True) actual,
+
+    -- testCase "deny grant when reason is empty" $ do
+    --     let
+    --     -- given
+    --         reason = ""
+    --         principals = ["sheila", "thomas"]
+
+    --     -- when
+    --         actual = grant principals reason
+
+    --     -- then
+    --     denied (const True) actual,
+
+    -- testCase "deny if fewer than 2 unique principals" $ do
+    --     let
+    --     -- given
+    --         principal1 = "charlie"
+    --         principals = [principal1, principal1, principal1]
+
+    --     -- when
+    --         actual = grant principals "crash"
+
+    --     -- then
+    --     denied (const True) actual,
+
+    -- testCase "emit attempt event when granted" $ do
+    --     let
+    --         -- given
+    --             principals = ["natalie", "christopher"]
+    --             reason = "something happened"
+
+    --         -- when
+    --             actual = grant principals reason
+
+    --         -- then
+    --     logged [(Attempt (fromList principals) reason)] (const True) actual,
+
+    -- testCase "emit attempt event when not" $ do
+    --     let
+    --     -- given
+    --         principals = ["json"]
+    --         reason = "something happened"
+
+    --     -- when
+    --         actual = grant principals reason
+
+    --     -- then
+    --     logged [(Attempt (fromList principals) reason)] (const True) actual,
+
+    -- testCase "log principals and reason when granted" $ do
+    --     let
+    --     -- given
+    --         principals = ["natalie", "christopher"]
+    --         reason = "something happened"
+
+    --     -- when
+    --         actual = grant principals reason
+
+    --     -- then
+    --     logged [Grant (sort principals) reason] (const True) actual,
+
+    -- testCase "log not-authorized authorization denied" $ do
+    --     let
+    --     -- given
+    --         principals = ["natalie"]
+    --         reason = "something happened"
+
+    --     -- when
+    --         actual = grant principals reason
+
+    --     -- then
+    --     logged [NotAuthorized  (sort principals) [] reason] (const True) actual,
+
+    -- testCase "log missing-reason when missing reason" $ do
+    --     let
+    --     -- given
+    --         principals = ["charlene", "toby", "carlton" ]
+    --         reason = ""
+
+    --     -- when
+    --         actual = grant principals reason
+
+    --     -- then
+    --     logged [MissingReason (sort principals)] (const True) actual,
+
+    -- testCase "denies unauthorized principals" $ do
+    --     let
+    --     -- given
+    --         authorized = "josie"
+    --         unauthorized = "tom"
+    --         principals = [authorized, unauthorized]
+
+    --     -- when
+    --         actual = grant principals "rain"
+
+    --     -- then
+    --     denied (== authorized) actual
 
     ]
 
 
-data DualControlEvent where
-    Attempt :: [Text] -> Text -> DualControlEvent
-    Grant :: [Text] -> Text -> DualControlEvent
-    NotAuthorized :: [Text] -> [Text] -> Text -> DualControlEvent
-    MissingReason :: [Text] -> DualControlEvent
+data Event where
+    Request :: Access -> Principal -> Reason -> Event
+    Approve :: Token -> Principal -> Event
+    Issue :: Token -> Event
+    Expired :: Token -> Event
     deriving (Eq, Show)
 
--- type Log = [(Text, [Text], Bool)]
+data Events a where
+    Emit :: Event -> Events ()
 
-data DualControlEventStream a where
-    Emit :: DualControlEvent -> DualControlEventStream ()
+data Clock a where
+    Now :: Clock UTCTime
 
-data Authorization a where
-    Verify :: Text -> Authorization Bool
+-- class DualControl r where
+--     grant :: [Text] -> Text -> r (Maybe Text)
 
-data Crypto a where
-    Salt :: Crypto Text
+-- type Principal = Text
 
-class DualControl r where
-    grant :: [Text] -> Text -> r (Maybe Text)
+-- instance (Members '[Clock, Crypto, DualControlEventStream, Authorization] effects) => DualControl (Eff effects) where
+--     grant principals reason = do
+--         send (Emit (Attempt (fromList principals) reason))
+--         let unique = uniq principals
+--         verify <- mapM (send . Verify) unique
+--         if length (filter id verify) >= 2
+--             then if (T.null reason)
+--                     then do
+--                         send (Emit (MissingReason (sort principals)))
+--                         pure Nothing
+--                     else do
+--                         send (Emit (Grant (sort principals) reason))
+--                         salt <- send Salt
+--                         pure (Just salt)
+--             else do
+--                 send (Emit (NotAuthorized (sort principals) [] reason))
+--                 pure Nothing
 
 
--- data Token = Token {
---     principals :: [Text],
---     reason :: Text,
---     expiration :: UTCTime
--- }
+newtype Principal = Principal Text
+    deriving (Eq, Show, Hashable)
+
+data Reason where
+    Provision :: Reason
+    Deploy :: Reason
+    Monitor :: Reason
+    FightFire :: Text -> Reason
+    Emergency :: Text -> Reason
+    Administer :: Text -> Reason
+    Develop :: Reason
+    deriving (Eq, Show)
+
+newtype Account = Account Text deriving (Eq, Show, Hashable)
+newtype Role = Role Text deriving (Eq, Show, Hashable)
+
+data Access where
+    AccountRole :: Account -> Role -> Access
+    deriving (Eq, Show)
+
+data Token = Token {
+    access :: Access,
+    principals :: HashSet Principal,
+    reason :: Reason,
+    expiration :: UTCTime
+} deriving (Eq, Show)
+
+class AccessControl r where
+    -- | Make an initial access request. Depending on the resource and reason, this may be enough
+    --   to grant access.
+    requestAccess ::
+        -- | kind of access being requested
+        Access ->
+        -- | reason for access, use to document activity
+        Reason ->
+        -- | principal (user or otherwise) on whose behalf access is requested
+        Principal ->
+        -- | a token if successful request
+        r (Maybe Token)
+
+    -- | Approve an access request. For dual control and other cooperative controls.
+    approveAccess ::
+        -- | request token to approve
+        Token ->
+        -- | approver
+        Principal ->
+        -- | a token if approval succeeds
+        r (Maybe Token)
 
 
-instance (Member Crypto effects, Member DualControlEventStream effects, Member Authorization effects) => DualControl (Eff effects) where
-    grant principals reason = do
-        send (Emit (Attempt (sort principals) reason))
-        let unique = uniq principals
-        verify <- mapM (send . Verify) unique
-        if length (filter id verify) >= 2
-            then if (T.null reason)
-                    then do
-                        send (Emit (MissingReason (sort principals)))
-                        pure Nothing
-                    else do
-                        send (Emit (Grant (sort principals) reason))
-                        salt <- send Salt
-                        pure (Just salt)
+
+instance (Members '[Clock, Events] effects) => AccessControl (Eff effects) where
+    requestAccess access reason requestor = do
+        send (Emit (Request access requestor reason ))
+        now <- send Now
+        let token = Token access (singleton requestor) reason (addUTCTime (realToFrac (3600 :: Int)) now)
+        send (Emit (Issue token))
+        pure . Just $ token
+    approveAccess request approver = do
+        send (Emit (Approve request approver))
+        now <- send Now
+        if (expiration request) >= now
+            then do
+                let token = Token (access request) (singleton approver <> principals request) (reason request) (addUTCTime (realToFrac (3600 :: Int)) now)
+                send (Emit (Issue token))
+                pure . Just $ token
             else do
-                send (Emit (NotAuthorized (sort principals) [] reason))
+                send (Emit (Expired request))
                 pure Nothing
 
 
-runOp :: Text -> (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> (Maybe Text, [DualControlEvent])
-runOp salt authz es =
-    handleCrypto salt es & handleLog & handleAuth authz & run
+contains :: (Eq a) => [a] -> a ->  Assertion
+contains as a = elem a as === True
 
-handleLog :: Eff (DualControlEventStream ': effects) a -> Eff effects (a, [DualControlEvent])
-handleLog es = runWriter $ reinterpret impl es
+runOp :: UTCTime -> Eff '[Clock, Events] a -> (a, [Event])
+runOp now es =
+    handleClock now es & handleEvents & run
+
+handleEvents :: Eff (Events ': effects) a -> Eff effects (a, [Event])
+handleEvents es = runWriter $ reinterpret impl es
     where
-        impl :: DualControlEventStream b -> Eff (Writer [DualControlEvent] ': effs) b
+        impl :: Events b -> Eff (Writer [Event] ': effs) b
         impl (Emit l) = tell [l]
 
-handleAuth :: (Text -> Bool) -> Eff (Authorization ': effects) a -> Eff effects a
-handleAuth authz = interpret $ \(Verify prin) -> pure (authz prin)
+handleClock :: UTCTime -> Eff (Clock ': effects) a -> Eff effects a
+handleClock now = interpret $ \Now -> pure now
 
-handleCrypto :: Text -> Eff (Crypto ': effects) a -> Eff effects a
-handleCrypto salt = interpret $ \Salt -> pure salt
+tokenOf :: Eff '[Clock, Events] (Maybe Token) -> UTCTime -> Token
+tokenOf es now = fromJust . fst $ runOp now es
 
-denied :: (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> Assertion
-denied authz es = (fst $ runOp "whatever" authz es) === Nothing
+accessOf :: Eff '[Clock, Events] (Maybe Token) -> UTCTime -> Access
+accessOf es now = access . fromJust . fst $ runOp now es
 
-granted :: (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> Assertion
-granted authz es =
-    let salt = "salty"
-        response = fst $ runOp salt authz es
-    in response === Just salt
+expirationOf :: Eff '[Clock, Events] (Maybe Token) -> UTCTime -> UTCTime
+expirationOf es now = expiration . fromJust . fst $ runOp now es
 
-logged :: [DualControlEvent] -> (Text -> Bool) -> Eff '[Crypto, DualControlEventStream, Authorization] (Maybe Text) -> Assertion
-logged expected authz es =
-    let events = snd $ runOp "whatever" authz es
-        actual = filter (\e -> elem e expected) events
-    in actual === expected
+reasonOf :: Eff '[Clock, Events] (Maybe Token) -> UTCTime -> Reason
+reasonOf es now =  reason . fromJust . fst $ runOp now es
 
-uniq :: (Ord a) => [a] -> [a]
-uniq [] = []
-uniq as = head <$> (group . sort) as
+principalsOf :: Eff '[Clock, Events] (Maybe Token) -> UTCTime -> HashSet Principal
+principalsOf es now = principals . fromJust . fst $ runOp now es
+
+logsOf :: Eff '[Clock, Events] (Maybe Token) -> UTCTime -> [Event]
+logsOf es now = snd $ runOp now es
+
+succeeded :: Eff '[Clock, Events] (Maybe Token) -> UTCTime -> Bool
+succeeded es now = isJust . fst $ runOp now es
