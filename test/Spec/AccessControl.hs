@@ -12,7 +12,7 @@ import Data.Maybe (fromJust, isJust)
 import Data.Monoid ((<>))
 import Data.Time.Clock (UTCTime (..), addUTCTime)
 
-import AccessControl (AccessControl (..))
+import AccessControl (requestAccess, approveAccess)
 import AccessControl.Effect.Clock
 import AccessControl.Effect.Events (Event (..), Events (..))
 import AccessControl.Types
