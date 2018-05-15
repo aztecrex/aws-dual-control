@@ -2,12 +2,13 @@
 module AccessControl (
     requestAccess,
     approveAccess,
+    federateAccess,
     tokenDurationSeconds,
 ) where
 
 import AccessControl.Effect.Clock (Clock, now)
 import AccessControl.Effect.Events (Events, emitRequest, emitApprove, emitIssue, emitExpired)
-import AccessControl.Types (Access, Reason, Principal, Token (..))
+import AccessControl.Types (Access, Reason, Principal, Token (..), AccessCredentials)
 import Control.Monad.Freer (Eff, Members)
 import Data.HashSet (singleton)
 import Data.Monoid ((<>))
@@ -55,3 +56,9 @@ approveAccess request approver = do
             emitExpired request
             pure Nothing
 
+federateAccess :: (Members '[Clock, Events] effects) =>
+    -- | request to federate
+    Token ->
+    -- | access credentials and updated request
+    Eff effects (Maybe (AccessCredentials, Token))
+federateAccess = error "NYI"

@@ -5,7 +5,8 @@ module AccessControl.Types (
     Role (..),
     Access (..),
     Token (..),
-    Event (..)
+    Event (..),
+    AccessCredentials
 ) where
 
 import Data.Hashable (Hashable)
@@ -27,13 +28,13 @@ data Reason where
     deriving (Eq, Show)
 
 newtype Account = Account Text deriving (Eq, Show, Hashable)
-
 newtype Role = Role Text deriving (Eq, Show, Hashable)
+newtype HostCoordinates = HostCoordinates Text deriving (Eq, Show, Hashable)
 
 data Access where
     AccountRole :: Account -> Role -> Access
     AccountRoot :: Account -> Access
-    AccountHost :: Account -> Access
+    AccountHost :: Account -> HostCoordinates -> Access
     deriving (Eq, Show)
 
 data Token = Token {
@@ -50,3 +51,23 @@ data Event where
     Expired :: Token -> Event
     deriving (Eq, Show)
 
+newtype AccessKey = AccessKey Text deriving (Eq, Show, Hashable)
+newtype SecretKey = SecretKey Text deriving (Eq, Show, Hashable)
+newtype SessionKey = SessionKey Text deriving (Eq, Show, Hashable)
+newtype Username = Username Text deriving (Eq, Show, Hashable)
+newtype Password = Password Text deriving (Eq, Show, Hashable)
+newtype SSHKey = SSHKey Text deriving (Eq, Show, Hashable)
+
+data AWSSession where
+    AWSSession :: AccessKey -> SecretKey -> SessionKey -> AWSSession
+    deriving (Eq, Show)
+
+data AWSAccountRoot where
+    AWSAccountRoot :: Username -> Password -> AWSAccountRoot
+    deriving (Eq, Show)
+
+data SSHHost where
+    SSHHost :: Username -> SSHKey -> SSHHost
+    deriving (Eq, Show)
+
+data AccessCredentials where
